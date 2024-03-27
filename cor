@@ -1,0 +1,14 @@
+test_pop_token_update
+import pytest
+from src.pop_token_validator import validate_pop_token
+from src.exceptions import InvalidPopTokenError
+from unittest.mock import patch
+
+@pytest.fixture(scope="module")
+def valid_event():
+    return {"headers": {"Authorization": "PoP valid.jwt.token"}}
+
+def test_validate_pop_token_invalid_jwt(valid_event):
+    with patch('src.pop_token_validator.jwt.decode', side_effect=InvalidPopTokenError("Invalid JWT token provided")),          patch('src.pop_token_validator._get_rsa_public_key', return_value=None):
+        with pytest.raises(InvalidPopTokenError):
+            validate_pop_token(valid_event)
