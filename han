@@ -1,0 +1,48 @@
+test_handler_update
+
+import pytest
+from src.handler import handler
+from unittest.mock import patch, MagicMock
+import json
+
+@pytest.fixture(scope="module")
+def valid_event():
+    return {
+        "headers": {"Authorization": "PoP someValidToken"},
+        "body": json.dumps({"telephoneNumber": "1234567890"}),
+        "path": "/some/path"
+    }
+
+@pytest.fixture(scope="module")
+def invalid_token_event():
+    return {
+        "headers": {"Authorization": "PoP invalidToken"},
+        "body": json.dumps({"telephoneNumber": "1234567890"})
+    }
+
+def test_handler_valid_request(valid_event):
+    with patch('src.pop_token_validator.validate_pop_token', return_value=True), \
+         patch('src.handler.post_call', return_value=MagicMock(status_code=200, json=lambda: {"isValid": True})):
+        response = handler(valid_event, None)
+        assert response['statusCode'] == 200, "Valid request should return 200 status code."
+        assert json.loads(response['body'])['isValid'] is True, "Expected isValid to be True for valid request."
+
+def test_handler_invalid_token(invalid_token_event):
+    with patch('src.pop_token_validator.validate_pop_token', side_effect=Exception("Invalid PoP token")):
+        response = handler(invalid_token_event, None)
+        assert response['statusCode'] == 401, "Invalid token should result in 401 status code."
+
+def test_handler_invalid_phone_number_format():
+    event_with_invalid_phone_number = {
+        "headers": {"Authorization": "PoP someValidToken"},
+        "body": json.dumps({"telephoneNumber": "invalidPhoneNumber"})
+    }
+    with patch('src.pop_token_validator.validate_pop_token', return_value=True):
+        response = handler(event_with_invalid_phone_number, None)
+        assert response['statusCode'] == 400, "Invalid phone number format should result in 400 status code."
+
+def test_handler_elasticsearch_service_failure(valid_event):
+    with patch('src.pop_token_validator.validate_pop_token', return_value=True), \
+         patch('src.handler.post_call', return_value=MagicMock(status_code=500)):
+        response = handler(valid_event, None)
+        assert response['statusCode'] == 500, "Elasticsearch service failure should result in 500 status code."
