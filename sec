@@ -1,0 +1,15 @@
+test_secret_client
+import pytest
+from src.secret_client import SecretClient
+from requests.exceptions import HTTPError
+from unittest.mock import MagicMock
+
+@pytest.fixture(scope="module")
+def secret_client():
+    return SecretClient(domain='testDomain', role='testRole', lockbox_id='testLockboxId', verify=False)
+
+def test_secret_client_fetch_success(secret_client):
+    # Mock the IAM client's get_secret_from_path method to return a specific value
+    secret_client.iam_client.get_secret_from_path = MagicMock(return_value={'consultativesales_dnc_api_clientSecret': 'expectedSecretValue'})
+    actual_secret = secret_client.get_secret('consultativesales_dnc_api_clientSecret')
+    assert actual_secret == 'expectedSecretValue', "The fetched secret should match the expected value."
