@@ -1,0 +1,21 @@
+test_exchange_client
+import pytest
+from src.exchange_client import ExchangeClient
+from requests.exceptions import HTTPError
+from tests.unit.mock_requests_client import MockRequestsClient
+
+@pytest.fixture(scope="module")
+def exchange_client():
+    return ExchangeClient(devex_oauth_url='https://example.com/oauth/token',
+                          devex_client_id='client_id',
+                          devex_client_secret='client_secret')
+
+def mocked_requests_post(*args, **kwargs):
+    if 'error' in kwargs.get('url', ''):
+        return MockRequestsClient(json_data=None, status_code=503, content="Service Unavailable")
+    return MockRequestsClient(json_data={'access_token': 'dummyToken'}, status_code=200)
+
+def test_exchange_client_unexpected_status(monkeypatch, exchange_client):
+    monkeypatch.setattr('requests.post', mocked_requests_post)
+    with pytest.raises(HTTPError):
+        exchange_client.fetch_devex_oauth_token()
