@@ -1,0 +1,151 @@
+from binascii import Error
+import json
+import unittest
+from unittest.mock import patch, MagicMock
+import os
+from jwt import InvalidTokenError
+from src.exceptions import InvalidPoPTokenError
+mock_credentials = MagicMock()
+mock_credentials.access_key = 'mock_access_key'
+mock_credentials.secret_key = 'mock_secret_key'
+mock_credentials.token = 'mock_token'
+
+with patch('boto3.Session.get_credentials', return_value=mock_credentials), patch.dict(os.environ, {'host':'val'}):
+        from src.handler import response_creator, handler
+
+from src.pop_token_validator import _retrieve_authorization_header
+
+class TestResponseCreator(unittest.TestCase):
+
+    def test_response_creator(self):
+        # Define test data
+        status_code = 200
+        response_message = {"message": "Success"}
+
+        # Call the function under test
+        response = response_creator(status_code, response_message)
+
+        # Assert the response is as expected
+        self.assertEqual(response['statusCode'], status_code)
+        self.assertFalse(response['isBase64Encoded'])
+        self.assertEqual(response['headers'], {"Content-Type": "application/json"})
+        self.assertEqual(response['body'], json.dumps(response_message))
+
+    @patch('src.handler.validate_pop_token')
+    def test_handler_health_check_success(self, mock_post):
+        # Call the handler function with a health check event
+        event = {'path': '/health'}
+        response = handler(event, None)
+        # Assert that the response indicates the service is healthy
+        self.assertEqual(response['statusCode'], 200)
+        self.assertEqual(response['body'], '"Healthy"')
+
+    def test_handler_health_check_failure(self):
+        # Call the handler function with a health check event
+        event = {'path': '/health'}
+        response = handler(event, None)
+        # Assert that the response indicates the service is not healthy
+        self.assertEqual(response['statusCode'], 401)
+        self.assertIn('Pop token validation failed',response['body'])
+  
+    @patch('src.handler.requests.post')
+    @patch('src.handler.validate_pop_token')
+    def test_handler_invalid_phone_number(self, mock_post, mock_token): #, mock_get_credentials
+        # Mock response from requests.post()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = '{"hits": {"total": {"value": 0}}}'
+        mock_post.return_value = mock_response
+
+        # Call the handler function with an event containing an invalid phone number
+        event = {'body': '{"telephoneNumber": "invalid"}'}
+        response = handler(event, None)
+        # Assert that the response indicates an invalid phone number
+        self.assertEqual(response['statusCode'], 400)
+        self.assertIn('phoneNumber contains a character that is not a digit between 0-9', response['body'])
+
+    @patch('src.handler.requests.post')
+    @patch('src.handler.validate_pop_token')
+    def test_handler_invalid_length_phone_number(self, mock_post, mock_token):
+        # Mock response from requests.post()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = '{"hits": {"total": {"value": 0}}}'
+        mock_post.return_value = mock_response
+
+        # Call the handler function with an event containing an invalid phone number
+        event = {'body': '{"telephoneNumber": "1234556"}'}
+        response = handler(event, None)
+
+        # Assert that the response indicates an invalid phone number
+        self.assertEqual(response['statusCode'], 400)
+        self.assertIn('phoneNumber was not 10 digits long', response['body'])
+
+    @patch('src.handler.validate_pop_token')
+    def test_pop_validate(self, mock_token):
+        # Call the handler function with an event containing an invalid phone number
+        mock_token.side_effect = InvalidPoPTokenError
+        event = {'path': '/health'}
+        response = handler(event, None)
+
+        # Assert that the response indicates an invalid phone number
+        self.assertEqual(response['statusCode'], 401)
+        #self.assertIn('phoneNumber was not 10 digits long', response['body'])
+
+    @patch('src.handler.validate_pop_token')
+    @patch('src.handler.requests.post')
+    def test_handler_valid_phone_number_found_hit(self, mock_post, mock_token):       
+        # Mock response from requests.post() to simulate a phone number hit
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = '{"hits": {"total": {"value": 1}}}'  # Simulate 1 hit, meaning phone number is found
+        mock_post.return_value = mock_response
+
+        # Call the handler function with a valid phone number
+        event = {'body': '{"telephoneNumber": "1234567890"}'}
+        response = handler(event, None)
+
+        # Assert that the response correctly indicates the phone number is found
+        self.assertEqual(response['statusCode'], 200)
+        self.assertIn('isValid', response['body'])
+
+    @patch('src.handler.validate_pop_token')
+    @patch('src.handler.requests.post')
+    def test_handler_valid_phone_number_found_nohit(self, mock_post, mock_token):       
+        # Mock response from requests.post() to simulate a phone number hit
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = '{"hits": {"total": {"value": 0}}}'  # Simulate  hit
+        mock_post.return_value = mock_response
+
+        # Call the handler function with a valid phone number
+        event = {'body': '{"telephoneNumber": "1234567890"}'}
+        response = handler(event, None)
+
+        # Assert that the response correctly indicates the phone number is found
+        self.assertEqual(response['statusCode'], 200)
+        self.assertIn('isValid', response['body'])
+
+    @patch('src.handler.validate_pop_token')
+    @patch('src.handler.requests.post')
+    def test_handler_valid_phone_number_privacy_check(self, mock_post, mock_token):       
+        # Mock response from requests.post() to simulate a phone number hit
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.text = '{"hits": {"total": {"values": 0}}}'  # Simulate  hit
+        mock_post.return_value = mock_response
+
+        # Call the handler function with a valid phone number
+        event = {'body': '{"telephoneNumber": "1234567890"}'}
+        response = handler(event, None)
+
+        # Assert that the response correctly indicates the phone number is found
+        self.assertEqual(response['statusCode'], 500)
+        self.assertIn('There is an issue performing the privacy check. Please try again later', response['body'])
+
+if __name__=='__src.handler__':
+  unittest.src.handler()
+  
+
+
+
