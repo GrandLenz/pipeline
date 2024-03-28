@@ -1,0 +1,63 @@
+import unittest
+from unittest.mock import patch, MagicMock
+from requests.exceptions import HTTPError
+from src.secret_client import SecretClient
+
+class TestSecretClient(unittest.TestCase):
+
+    @patch('src.secret_client.IamClient')
+    def test_get_secret(self, mock_iam_client):
+        # Mock the IamClient instance
+        mock_instance = MagicMock()
+        mock_instance.get_secret_from_path.return_value = {"consultativesales_dnc_api_clientSecret": "mock_secret"}
+        mock_iam_client.return_value = mock_instance
+
+        # Instantiate the SecretClient
+        secret_client = SecretClient(domain="example.com", role="role", lockbox_id="lockbox", verify=False)
+
+        # Call the get_secret method
+        secret = secret_client.get_secret("example_key")
+
+        # Assert that the IamClient method was called with the correct arguments
+        mock_instance.get_secret_from_path.assert_called_once_with("example_key")
+
+        # Assert that the secret is returned correctly
+        self.assertEqual(secret, "mock_secret")
+
+    @patch('src.secret_client.IamClient')
+    def test_get_secret_missing_key(self, mock_iam_client):
+        # Mock the IamClient instance to raise KeyError
+        mock_instance = MagicMock()
+        mock_instance.get_secret_from_path.side_effect = KeyError
+        mock_iam_client.return_value = mock_instance
+
+        # Instantiate the SecretClient
+        secret_client = SecretClient(domain="example.com", role="role", lockbox_id="lockbox", verify=False)
+
+        # Call the get_secret method and expect it to raise an Exception
+        with self.assertRaises(Exception):
+            secret_client.get_secret("missing_key")
+
+    @patch('src.secret_client.IamClient')
+    def test_get_secret_http_error(self, mock_iam_client):
+        # Mock the IamClient instance to raise HTTPError
+        mock_instance = MagicMock()
+        mock_instance.get_secret_from_path.side_effect = HTTPError("HTTP Error")
+        mock_iam_client.return_value = mock_instance
+
+        # Instantiate the SecretClient
+        secret_client = SecretClient(domain="example.com", role="role", lockbox_id="lockbox", verify=False)
+
+        # Call the get_secret method and expect it to raise an Exception
+        with self.assertRaises(Exception):
+            secret_client.get_secret("example_key")
+
+    def test_missing_configuration_variable(self):
+        # Test when one or more configuration variables are None
+        with self.assertRaises(Exception) as context:
+            secret_client = SecretClient(domain=None, role="role", lockbox_id="lockbox", verify=False)
+        self.assertEqual(str(context.exception), 'Chamber of Secrets environment variables not configured properly')
+
+
+if __name__ == '__src.secret_client__':
+    unittest.src.secret_client()
