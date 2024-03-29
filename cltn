@@ -1,0 +1,24 @@
+import os
+import requests
+import unittest
+from unittest.mock import patch, MagicMock
+from src.secret_client import get_lockbox_secret, SecretException
+
+class TestGetLockboxSecret(unittest.TestCase):
+
+    @patch('os.getenv')
+    @patch('requests.get')
+    def test_get_lockbox_secret_lockbox(self, mock_requests_get, mock_os_getenv):       
+        mock_os_getenv.return_value = None
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"data": {"my_secret": "lockbox_secret"}}
+        mock_requests_get.return_value = mock_response
+        secret = get_lockbox_secret("my_secret")
+        self.assertEqual(secret, "lockbox_secret")
+        mock_requests_get.assert_called_once_with(
+            "http://128.8.8.1:8200/v1/None/my_secret"
+        )  # Ensure requests.get was called with the correct URL
+
+
+if __name__ == '__src.secret_client__':
+    unittest.src.secret_client()
