@@ -1,0 +1,40 @@
+import pytest
+from unittest.mock import patch, MagicMock
+from secretclient import get_lockbox_secret, SecretException
+
+# Mock the os.environ to simulate environment variables
+@patch.dict("os.environ", {"SECRET_NAME": "super_secret", "COS_LOCKBOX_ID": "lockbox123"})
+def test_get_secret_from_env():
+    # Test retrieving a secret that exists in environment variables
+    secret = get_lockbox_secret("secret_name")
+    assert secret == "super_secret", "The secret should match the environment variable"
+
+@patch("requests.get")
+@patch.dict("os.environ", {"COS_LOCKBOX_ID": "lockbox123"})
+def test_get_secret_from_lockbox_success(mock_get):
+    # Mock the requests.get response for successful secret retrieval from lockbox
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"data": {"secret_name": "lockbox_secret"}}
+    mock_get.return_value = mock_response
+
+    secret = get_lockbox_secret("secret_name")
+    assert secret == "lockbox_secret", "The secret should be retrieved from the lockbox"
+
+@patch("requests.get", side_effect=Exception("Lockbox access failed"))
+@patch.dict("os.environ", {"COS_LOCKBOX_ID": "lockbox123"})
+def test_get_secret_lockbox_failure(mock_get):
+    # Test the behavior when the lockbox access fails
+    with pytest.raises(Exception, match="Lockbox access failed"):
+        get_lockbox_secret("secret_name")
+
+@patch("requests.get")
+@patch.dict("os.environ", {"COS_LOCKBOX_ID": "lockbox123"})
+def test_get_secret_from_lockbox_no_data(mock_get):
+    # Mock the requests.get response for no data returned from lockbox
+    mock_response = MagicMock()
+    mock_response.json.return_value = {"data": {}}
+    mock_get.return_value = mock_response
+
+    secret = get_lockbox_secret("secret_name")
+    assert secret == "", "The function should return an empty string if no secret is found"
+
