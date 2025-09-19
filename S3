@@ -1,0 +1,158 @@
+import * as cdk from 'aws-cdk-lib';
+import { Construct } from 'constructs';
+import { EnvContext } from '../interfaces';
+import {commonProps} from "./types";
+import {CfnBucket} from 'aws-cdk-lib/aws-s3';
+import { 
+  DataInternationalIndicator, 
+  S3Construct , 
+  DatastoreInventory,
+  BucketTags,
+  PolicyVariables
+} from '@cof/c1-cdk-lib/c1-s3';
+import { Role } from 'aws-cdk-lib/aws-iam';
+
+export const destinationRegionMap: { [env: string]: { [region: string]: string } } = {
+    "dev": {
+        "us-east-1": "us-east-1",
+    },
+    "qa": {
+        "us-east-1": "us-west-2",
+        "us-west-2": "us-east-1"
+    },
+    "prod": {
+        "": "",
+        "": ""
+    }
+};
+export interface S3Props {
+    commonProps: commonProps;
+    context: EnvContext;
+    eids?: string[];
+}
+
+export class S3Stack extends cdk.stack {
+    constructor(scope: Construct, id: string, props: S3Props) {
+      super(scope, id, props)
+
+      const federatedEids: string[] = [];
+      const accountNumber = [props.context?.env?.account]
+
+      let datastoreInventory: DatastoreInventory = {
+          containsData: true,
+          containsHumanData: false,
+          containsHshd: false,
+          containsPii: true,
+          dataInternationalIndicator: [DataInternationalIndicator.UK],
+      }; 
+
+      let bucketTags: BucketTags = {
+        ba: props.commonProps.businessApplicationName,
+        component: props.commonProps.componentName,
+        owner: props.commonProps.ownerContact,
+        datastoreInventory: datastoreInventory,
+      };
+
+      const deploymentRoleArn = scope.node.tryGetContext(`@opl-cdk/iamRoles:${props.context.env.account}-deployRoleArn`) ?? "IAMReserved-Jenkins4x-Child";
+
+      let policyVars: PolicyVariables = {
+        deploymentRoleArn: deploymentRoleArn,
+        policyFederatedEids: federatedEids,
+        policyAppIamRoles: [
+            `GR_GG_COF_AWS_${accountNumber}_Developer`,
+            `GR_GG_COF_AWS_${accountNumber}_Engineering`,
+            `GR_GG_COF_AWS_${accountNumber}_ReadOnly`,
+            `GR_GG_COF_AWS_${accountNumber}_ProdSupport`
+        ]
+      }
+
+      const bucketName = `prospectcontextpersonalized-ita-${props.context.env.region}`
+      const bucket = new S3Construct(this, `${id}-bucket`, {
+        bucketName: bucketName,
+        blockPublicAccess: cdk.aws_s3.BlockPublicAccess.BLOCK_ALL,
+        bucketTags : bucketTags,
+        policyVariables: policyVars,
+        federatedEids:federatedEids
+      })
+
+      bucket.addLifecycleRule({
+        expiration: cdk.Duration.days(7),
+        noncurrentVersionExpiration: cdk.Duration.days(7),
+        abortIncompleteMultipartUploadAfter: cdk.Duration.days(1),
+      });
+
+      const destinationRegion = destinationRegionMap[props.context.deployEnv][props.context.env.region];
+      const destinationBucket = bucketName!.slice(0, -9) + destinationRegion;
+
+      const replicationRole = Role.fromRoleArn(
+        this,
+        `${props.commonProps.businessApplicationName}/s3-rep-${bucketName}-${props.context.deployEnv}-role`,
+        `arn:aws:iam::${props.context.env.account}:role/${props.commonProps.businessApplicationName}/s3-rep-${bucketName}-${props.context.deployEnv}-role`,
+        { mutable: false, addGrantsToResources: true },
+      );
+
+      const s3policy = new cdk.aws_iam.Policy(this, 'S3Policy', {
+        statements: [
+          new cdk.aws_iam.PolicyStatement({
+            actions: [
+              's3:GetReplicationConfiguration',
+              's3:ListBucket',
+            ],
+            resources: [bucket.bucketArn, bucket.arnForObjects('*')],
+          }),
+          new cdk.aws_iam.PolicyStatement({
+            actions: [
+              'S3:GetObjectVersionForReplication',
+              'S3:GetObjectVersionAcl',
+              's3:GetObjectVersionTagging',
+              's3:ReplicateObject',
+              's3:ReplicateDelete',
+              's3:ReplicateTags"',
+            ],
+            resources: [bucket.bucketArn, bucket.arnForObjects('*')],
+          }),
+        ],
+      });
+
+      replicationRole.attachInlinePolicy(s3policy);
+      
+      (this.node.defaultChild as CfnBucket).replicationConfiguration = {
+          role: replicationRole,
+          rules: [
+              {
+                  destination: {
+                      bucket: `arn:aws:s3:::${destinationBucket}`,
+                      account: props.context.env.account
+                  },
+                  status: 'Enabled',
+                  prefix: 'copy/'
+              }
+          ],
+      };
+
+      bucket.addToResourcePolicy(
+        new cdk.aws_iam.PolicyStatement({
+          sid: 'RestrictAccessToAllowedRoles',
+          actions: ['s3:*'],
+          principals: [new cdk.aws_iam.StarPrincipal()],
+          effect: cdk.aws_iam.Effect.DENY,
+          resources: [`${bucket.bucketArn}/*`, bucket.bucketArn],
+          conditions: {
+            Null: {
+              'aws:PrincipalTag/iam-reserved:s3-enterprise-tooling': 'true',
+              'aws:PrincipalTag/iam-reserved:s3-divisional-tooling': 'true',
+            },
+            BoolIfExists: {
+              'aws:PrincipalIsAWSService': 'false',
+            },
+            StringNotEquals: {
+              'aws:arn': [
+                `arn:aws:sts::${accountNumber}:assumed-role/GR_GG_COF_AWS_${accountNumber}_Developer/vdb198`,
+                `arn:aws:sts::${accountNumber}:assumed-role/GR_GG_COF_AWS_${accountNumber}_Developer/xov802`,
+              ],
+            },
+          },
+        }),
+      );
+    }
+  }
